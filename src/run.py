@@ -17,6 +17,7 @@ from tqdm import tqdm
 from model import model
 from utils import iter_data, count_parameters
 
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
