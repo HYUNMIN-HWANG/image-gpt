@@ -14,8 +14,8 @@ from scipy.special import softmax
 from tensorflow.contrib.training import HParams
 from tqdm import tqdm
 
-from model import model
-from utils import iter_data, count_parameters
+from nmb_model import model
+from nmb_utils import iter_data, count_parameters
 
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
@@ -44,7 +44,7 @@ def parse_arguments():
     parser.add_argument("--n_gpu", type=int, default=8, help="number of gpus to distribute training across")
 
     # mode
-    parser.add_argument("--eval", action="store_true", help="evaluates the model, requires a checkpoint and dataset")
+    parser.add_argument("--eval", action="store_true", default=True, help="evaluates the model, requires a checkpoint and dataset")
     parser.add_argument("--sample", action="store_true", help="samples from the model, requires a checkpoint and clusters")
 
     # reproducibility
@@ -52,6 +52,26 @@ def parse_arguments():
 
     args = parser.parse_args()
     print("input args:\n", json.dumps(vars(args), indent=4, separators=(",", ":")))
+    # {
+    # "data_path":"/root/downloads/imagenet",
+    # "ckpt_path":"/root/downloads/model.ckpt-1000000",
+    # "color_cluster_path":"/root/downloads/kmeans_centers.npy",
+    # "save_dir":"/root/save/",
+    # "n_embd":512,
+    # "n_head":8,
+    # "n_layer":24,
+    # "n_px":32,
+    # "n_vocab":512,
+    # "bert":false,
+    # "bert_mask_prob":0.15,
+    # "clf":false,
+    # "n_sub_batch":8,
+    # "n_gpu":8,
+    # "eval":false,
+    # "sample":false,
+    # "seed":42
+    # }
+
     return args
 
 
@@ -68,8 +88,18 @@ def load_data(data_path):
     vaY = np.load(f'{data_path}_vaY.npy')
     teX = np.load(f'{data_path}_teX.npy')
     teY = np.load(f'{data_path}_teY.npy')
+
+    print("trX.shape", trX.shape, "trY.shape", trY.shape)
+    print("vaX.shape", vaX.shape, "vaY.shape", vaY.shape)
+    print("teX.shape", vaX.shape, "teY.shape", vaY.shape)
+
     return (trX, trY), (vaX, vaY), (teX, teY)
 
+data_path ="/root/downloads/imagenet"
+(trX, trY), (vaX, vaY), (teX, teY) = load_data(data_path)
+# trX.shape (1231230, 1024) trY.shape (1231230, 1000)
+# vaX.shape (49937, 1024) vaY.shape (49937, 1000)
+# teX.shape (49937, 1024) teY.shape (49937, 1000)
 
 def set_hparams(args):
     return HParams(
@@ -96,6 +126,8 @@ def create_model(x, y, n_gpu, hparams):
         with tf.device("/gpu:%d" % i):
             results = model(hparams, x[i], y[i], reuse=(i != 0))
 
+            exit()
+
             gen_logits.append(results["gen_logits"])
             gen_loss.append(results["gen_loss"])
             clf_loss.append(results["clf_loss"])
@@ -110,9 +142,18 @@ def create_model(x, y, n_gpu, hparams):
             if i == 0:
                 trainable_params = tf.trainable_variables()
                 print("trainable parameters:", count_parameters())
-
+    print("gen_logits ", gen_logits,"\n")
+    print("gen_loss ", gen_loss,"\n")
+    print("clf_loss ", clf_loss,"\n")
+    print("tot_loss ", tot_loss,"\n")
+    print("accuracy ", accuracy,"\n")
     return trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy
 
+# gen_logits  [<tf.Tensor 'model/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_1/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_2/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_3/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_4/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_5/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_6/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>, <tf.Tensor 'model_7/Reshape_1:0' shape=(8, 1024, 512) dtype=float32>]
+# gen_loss  [<tf.Tensor 'model/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_1/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_2/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_3/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_4/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_5/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_6/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_7/Mean:0' shape=() dtype=float32>]
+# clf_loss  [<tf.Tensor 'model/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_1/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_2/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_3/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_4/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_5/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_6/Mean_2:0' shape=() dtype=float32>, <tf.Tensor 'model_7/Mean_2:0' shape=() dtype=float32>]
+# tot_loss  [<tf.Tensor 'model/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_1/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_2/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_3/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_4/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_5/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_6/Mean:0' shape=() dtype=float32>, <tf.Tensor 'model_7/Mean:0' shape=() dtype=float32>]
+# accuracy  [<tf.Tensor 'model/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_1/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_2/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_3/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_4/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_5/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_6/mul_1:0' shape=() dtype=float32>, <tf.Tensor 'model_7/mul_1:0' shape=() dtype=float32>]
 
 def reduce_mean(gen_loss, clf_loss, tot_loss, accuracy, n_gpu):
     with tf.device("/gpu:0"):
@@ -134,7 +175,6 @@ def evaluate(sess, evX, evY, X, Y, gen_loss, clf_loss, accuracy, n_batch, desc, 
     eval_gen_loss, eval_clf_loss, eval_accuracy = [np.mean(m) for m in zip(*metrics)]
     print(f"{desc} gen: {eval_gen_loss:.4f} clf: {eval_clf_loss:.4f} acc: {eval_accuracy:.2f}")
 
-
 # naive sampler without caching
 def sample(sess, X, gen_logits, n_sub_batch, n_gpu, n_px, n_vocab, clusters, save_dir):
     samples = np.zeros([n_gpu * n_sub_batch, n_px * n_px], dtype=np.int32)
@@ -155,6 +195,8 @@ def sample(sess, X, gen_logits, n_sub_batch, n_gpu, n_px, n_vocab, clusters, sav
         imwrite(f"{args.save_dir}/sample_{i}.png", samples[i])
 
 
+
+
 def main(args):
     set_seed(args.seed)
 
@@ -167,6 +209,8 @@ def main(args):
     else:
         raise ValueError("Dataset not supported.")
 
+    
+
     X = tf.placeholder(tf.int32, [n_batch, args.n_px * args.n_px])
     Y = tf.placeholder(tf.float32, [n_batch, n_class])
 
@@ -174,14 +218,18 @@ def main(args):
     y = tf.split(Y, args.n_gpu, 0)
 
     hparams = set_hparams(args)
+    print("x : ", x, "\ty : ", y)
+    # x :  [<tf.Tensor 'split:0' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:1' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:2' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:3' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:4' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:5' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:6' shape=(8, 1024) dtype=int32>, <tf.Tensor 'split:7' shape=(8, 1024) dtype=int32>] 
+    # y :  [<tf.Tensor 'split_1:0' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:1' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:2' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:3' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:4' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:5' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:6' shape=(8, 1000) dtype=float32>, <tf.Tensor 'split_1:7' shape=(8, 1000) dtype=float32>]
     trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy = create_model(x, y, args.n_gpu, hparams)
     reduce_mean(gen_loss, clf_loss, tot_loss, accuracy, args.n_gpu)
 
-    saver = tf.train.Saver(var_list=[tp for tp in trainable_params if not 'clf' in tp.name])
+
+    saver = tf.train.Saver(var_list=[tp for tp in trainable_params if not 'clf' in tp.name])    # 모델 저장하기
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
         sess.run(tf.global_variables_initializer())
 
-        saver.restore(sess, args.ckpt_path)
+        saver.restore(sess, args.ckpt_path) # 모델 불러오기
 
         if args.eval:
             (trX, trY), (vaX, vaY), (teX, teY) = load_data(args.data_path)
