@@ -7,6 +7,8 @@ from sklearn.model_selection import train_test_split
 from nmb_utils import iter_data, count_parameters
 
 nb_classes = 2
+n_batch = 8 # 원래 128 / 1, 4 안됨
+n_gpu = 2   # 원래 8
 
 x = np.load('C:\\nmb\\nmb_data\\5s_last_0510\\total_data.npy')
 x = x.reshape(x.shape[0], x.shape[1]*x.shape[2])
@@ -26,11 +28,13 @@ print(x_test.shape, y_test.shape)   # (908, 128, 862) -> (908, 110336) (908, 2)
 print(x_valid.shape, y_valid.shape)   # (363, 110336) -> (363, 110336) (363, 2) 
 
 # X = tf.compat.v1.placeholder(tf.int32, [128, 862])
-X = tf.compat.v1.placeholder(tf.int32, [128, 110336])
-Y = tf.compat.v1.placeholder(tf.float32, [128, 2])
+# X = tf.compat.v1.placeholder(tf.int32, [128, 110336])
+X = tf.compat.v1.placeholder(tf.int32, [n_batch, 110336])
+# Y = tf.compat.v1.placeholder(tf.float32, [128, 2])
+Y = tf.compat.v1.placeholder(tf.float32, [n_batch, 2])
 
-x = tf.split(X, 8, 0)
-y = tf.split(Y, 8, 0)
+x = tf.split(X, n_gpu, 0)
+y = tf.split(Y, n_gpu, 0)
 
 def default_hparams():
     return HParams(
@@ -38,8 +42,7 @@ def default_hparams():
         n_ctx=1024,
         n_embd=768,
         n_head=12,
-        n_layer=12,
-        n_gpu=8
+        n_layer=12
     )
 
 def shape_list(x):
@@ -209,7 +212,7 @@ def set_hparams():
         bert=False,
         bert_mask_prob=0.15,
         clf=False,
-        n_gpu=8
+        eval=False
     )
 
 hparams = set_hparams()
@@ -364,7 +367,7 @@ def create_model(x, y, n_gpu, hparams):
     print("accuracy ", accuracy,"\n")
     return trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy
 
-trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy = create_model(x, y, 8, hparams)
+trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy = create_model(x, y, n_gpu, hparams)
 print(trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy)
 print("========================================================================")
 
@@ -379,10 +382,13 @@ def evaluate(sess, evX, evY, X, Y, gen_loss, clf_loss, accuracy, n_batch, desc, 
 training_epochs = 28
 batch_size = 10
 total_batch = int(len(x_train)/batch_size)  # x_train / 100 = 362
-n_batch = 128
+# n_batch = 128 # 원래 128이었음
+# n_batch = 32
 
+saver = tf.train.Saver(var_list=[tp for tp in trainable_params if not 'clf' in tp.name])    # 모델 저장하기
 with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
     sess.run(tf.global_variables_initializer())
+    saver.restore(sess, "/root/downloads/model.ckpt-1000000")
 
     trX = x_train
     trY = y_train
