@@ -21,12 +21,16 @@ y_train = to_categorical(y_train)
 y_test = to_categorical(y_test)
 y_valid = to_categorical(y_valid)
 
-print(x_train.shape, y_train.shape) # (3265, 128, 862) (3265, 2) -> (3265, 110336) (3265,)
-print(x_test.shape, y_test.shape)   # (908, 128, 862) (908, 2) -> (908, 110336) (908,)
-print(x_valid.shape, y_valid.shape)   # (363, 110336) (363, 2) -> (363, 110336) (363,)
+print(x_train.shape, y_train.shape) # (3265, 128, 862) -> (3265, 110336) (3265, 2) 
+print(x_test.shape, y_test.shape)   # (908, 128, 862) -> (908, 110336) (908, 2) 
+print(x_valid.shape, y_valid.shape)   # (363, 110336) -> (363, 110336) (363, 2) 
 
-X = tf.compat.v1.placeholder(tf.int32, [128, 862])
-Y = tf.compat.v1.placeholder(tf.float32, [None, 2])
+# X = tf.compat.v1.placeholder(tf.int32, [128, 862])
+X = tf.compat.v1.placeholder(tf.int32, [128, 110336])
+Y = tf.compat.v1.placeholder(tf.float32, [128, 2])
+
+x = tf.split(X, 8, 0)
+y = tf.split(Y, 8, 0)
 
 def default_hparams():
     return HParams(
@@ -35,6 +39,7 @@ def default_hparams():
         n_embd=768,
         n_head=12,
         n_layer=12,
+        n_gpu=8
     )
 
 def shape_list(x):
@@ -193,6 +198,7 @@ def positions_for(tokens, past_length):
     nsteps = tf.shape(tokens)[1]
     return expand_tile(past_length + tf.range(nsteps), batch_size)
 
+   
 def set_hparams():
     return HParams(
         n_ctx=128,
@@ -203,6 +209,7 @@ def set_hparams():
         bert=False,
         bert_mask_prob=0.15,
         clf=False,
+        n_gpu=8
     )
 
 hparams = set_hparams()
@@ -211,7 +218,7 @@ def model(hparams, X, Y=None, past=None, scope='model', reuse=False):
     print("===========================================")
     print("hparams \t",hparams) # n_ctx=128,n_embd=862,n_head=8,n_layer=24,n_vocab=512,bert=False,bert_mask_prob=0.15,clf=False
     print("X \t", X)            # Tensor("Placeholder:0", shape=(128, 862), dtype=int32)
-    print("Y \t", Y)            # Tensor("Placeholder_1:0", shape=(?, 2), dtype=float32)
+    print("Y \t", Y)            # Tensor("Placeholder_1:0", shape=(128, 2), dtype=float32)
     print("past \t", past)      # None
     print("scope \t", scope)    # model
     print("reuse \t", reuse)    # False
@@ -292,7 +299,7 @@ def model(hparams, X, Y=None, past=None, scope='model', reuse=False):
 
         return results
 
-results = model(hparams, X, Y)
+# results = model(hparams, X, Y)
 
 '''
 shape_result     [128, 862]
@@ -305,23 +312,61 @@ shape_result     [128, 128, 862, 862]
 .
 .
 .
+conv1d layer     Tensor("model/h23/mlp/c_proj/Reshape_2:0", shape=(128, 862, 862), dtype=float32)
+gen_logits       Tensor("model/Reshape_1:0", shape=(128, 862, 512), dtype=float32)
 softmax :        Tensor("model/SparseSoftmaxCrossEntropyWithLogits/Reshape_2:0", shape=(128, 862), dtype=float32)
 mean softmax     Tensor("model/SparseSoftmaxCrossEntropyWithLogits/Reshape_2:0", shape=(128, 862), dtype=float32)
-shape_result     [<tf.Tensor 'model/clf/strided_slice:0' shape=() dtype=int32>, 2]
+shape_result     [128, 2]
 ===clf_losses===         Tensor("model/Mean_2:0", shape=(), dtype=float32)
 ===correct===    Tensor("model/mul_1:0", shape=(), dtype=float32)
 '''
 
 print("=================")
-print(results)
+# print(results)
 # {'present': <tf.Tensor 'model/stack:0' shape=(128, 24, 2, 128, 862, 6) dtype=float32>, 
 # 'gen_logits': <tf.Tensor 'model/Reshape_1:0' shape=(128, 862, 512) dtype=float32>, 
 # 'gen_loss': <tf.Tensor 'model/Mean:0' shape=() dtype=float32>, 
 # 'clf_loss': <tf.Tensor 'model/Mean_2:0' shape=() dtype=float32>, 
 # 'accuracy': <tf.Tensor 'model/mul_1:0' shape=() dtype=float32>}
 print("=================")
-print(results['clf_loss'])
-print("=================")
+
+
+def create_model(x, y, n_gpu, hparams):
+    gen_logits = []
+    gen_loss = []
+    clf_loss = []
+    tot_loss = []
+    accuracy = []
+
+    trainable_params = None
+    for i in range(n_gpu):
+        with tf.device("/gpu:%d" % i):
+            results = model(hparams, x[i], y[i], reuse=(i != 0))
+
+            gen_logits.append(results["gen_logits"])
+            gen_loss.append(results["gen_loss"])
+            clf_loss.append(results["clf_loss"])
+
+            if hparams.clf:
+                tot_loss.append(results["gen_loss"] + results["clf_loss"])
+            else:
+                tot_loss.append(results["gen_loss"])
+
+            accuracy.append(results["accuracy"])
+
+            if i == 0:
+                trainable_params = tf.trainable_variables()
+                print("trainable parameters:", count_parameters())
+    print("gen_logits ", gen_logits,"\n")
+    print("gen_loss ", gen_loss,"\n")
+    print("clf_loss ", clf_loss,"\n")
+    print("tot_loss ", tot_loss,"\n")
+    print("accuracy ", accuracy,"\n")
+    return trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy
+
+trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy = create_model(x, y, 8, hparams)
+print(trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy)
+print("========================================================================")
 
 def evaluate(sess, evX, evY, X, Y, gen_loss, clf_loss, accuracy, n_batch, desc, permute=False):
     metrics = []
@@ -330,7 +375,7 @@ def evaluate(sess, evX, evY, X, Y, gen_loss, clf_loss, accuracy, n_batch, desc, 
     eval_gen_loss, eval_clf_loss, eval_accuracy = [np.mean(m) for m in zip(*metrics)]
     print(f"{desc} gen: {eval_gen_loss:.4f} clf: {eval_clf_loss:.4f} acc: {eval_accuracy:.2f}")
 
-opti_mizer = tf.compat.v1.train.AdamOptimizer(1e-4).minimize(results['clf_loss'])
+# opti_mizer = tf.compat.v1.train.AdamOptimizer(1e-4).minimize(clf_loss)
 training_epochs = 28
 batch_size = 10
 total_batch = int(len(x_train)/batch_size)  # x_train / 100 = 362
@@ -345,20 +390,33 @@ with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_plac
     vaY = y_valid
     teX = x_test
     teY = y_test
-    evaluate(sess, trX[:len(vaX)], trY[:len(vaY)], X, Y, results['gen_loss'], results['clf_loss'], results['accuracy'], n_batch, "train")
-    # ValueError: Index out of range using input dim 0; input has only 0 dims for 'strided_slice' (op: 'StridedSlice') with input shapes: [], [1], [1], [1] and with computed input tensors: input[3] = <1>.  
-    for epoch in range(training_epochs):
-        avg_loss= 0
+    print("=============================")
+    print(trX.shape, trY.shape)
+    print(vaX.shape, vaY.shape)
+    print(teX.shape, teY.shape)
+    # (3265, 110336) (3265, 2)
+    # (363, 110336) (363, 2)
+    # (908, 110336) (908, 2)
+    print(X)    # Tensor("Placeholder:0", shape=(128, 862), dtype=int32)
+    print(Y)    # TTensor("Placeholder_1:0", shape=(128, 2), dtype=float32)
+    print("=============================")
+    evaluate(sess, trX[:len(vaX)], trY[:len(vaY)], X, Y, gen_loss, clf_loss, accuracy, n_batch, "train")
+    evaluate(sess, vaX, vaY, X, Y, gen_loss, clf_loss, accuracy, n_batch, "valid")
+    evaluate(sess, teX, teY, X, Y, gen_loss, clf_loss, accuracy, n_batch, "test") 
 
-        for i in range(total_batch):  # 600번 돈다
-            start = i * batch_size
-            end = start + batch_size
 
-            batch_x, batch_y = x_train[start:end], y_train[start:end]
-            feed_dict = {X:batch_x, Y:batch_y}
-            l, _ = sess.run([results['clf_loss'], opti_mizer], feed_dict=feed_dict)
-            avg_loss += l/total_batch
-        print('epoch : ', '%04d' %(epoch+1),
-            'loss = {:.9f}'.format(avg_loss))
+    # for epoch in range(training_epochs):
+    #     avg_loss= 0
+
+    #     for i in range(total_batch):  # 600번 돈다
+    #         start = i * batch_size
+    #         end = start + batch_size
+
+    #         batch_x, batch_y = x_train[start:end], y_train[start:end]
+    #         feed_dict = {X:batch_x, Y:batch_y}
+    #         l, _ = sess.run([clf_loss, opti_mizer], feed_dict=feed_dict)
+    #         avg_loss += l/total_batch
+    #     print('epoch : ', '%04d' %(epoch+1),
+    #         'loss = {:.9f}'.format(avg_loss))
 
 print("== Done ==")

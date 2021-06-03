@@ -126,8 +126,6 @@ def create_model(x, y, n_gpu, hparams):
         with tf.device("/gpu:%d" % i):
             results = model(hparams, x[i], y[i], reuse=(i != 0))
 
-            exit()
-
             gen_logits.append(results["gen_logits"])
             gen_loss.append(results["gen_loss"])
             clf_loss.append(results["clf_loss"])
@@ -209,7 +207,6 @@ def main(args):
     else:
         raise ValueError("Dataset not supported.")
 
-    
 
     X = tf.placeholder(tf.int32, [n_batch, args.n_px * args.n_px])
     Y = tf.placeholder(tf.float32, [n_batch, n_class])
@@ -224,15 +221,28 @@ def main(args):
     trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy = create_model(x, y, args.n_gpu, hparams)
     reduce_mean(gen_loss, clf_loss, tot_loss, accuracy, args.n_gpu)
 
+    print(">>>>>>>><<<<<<<<<<")
+    print(trainable_params, gen_logits, gen_loss, clf_loss, tot_loss, accuracy)
+    print(">>>>>>>><<<<<<<<<<")
 
     saver = tf.train.Saver(var_list=[tp for tp in trainable_params if not 'clf' in tp.name])    # 모델 저장하기
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
         sess.run(tf.global_variables_initializer())
 
         saver.restore(sess, args.ckpt_path) # 모델 불러오기
-
+        
         if args.eval:
             (trX, trY), (vaX, vaY), (teX, teY) = load_data(args.data_path)
+            print("===================")
+            print(trX.shape, trY.shape)
+            print(vaX.shape, vaY.shape)
+            print(teX.shape, teY.shape)
+            # (1231230, 1024) (1231230, 1000)
+            # (49937, 1024) (49937, 1000)
+            # (50000, 1024) (50000, 1000)
+            print(X)    # Tensor("Placeholder:0", shape=(64, 1024), dtype=int32)
+            print(Y)    # Tensor("Placeholder_1:0", shape=(64, 1000), dtype=float32)
+            print("===================")
             evaluate(sess, trX[:len(vaX)], trY[:len(vaY)], X, Y, gen_loss, clf_loss, accuracy, n_batch, "train")
             evaluate(sess, vaX, vaY, X, Y, gen_loss, clf_loss, accuracy, n_batch, "valid")
             evaluate(sess, teX, teY, X, Y, gen_loss, clf_loss, accuracy, n_batch, "test")
